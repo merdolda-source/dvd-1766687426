@@ -4,35 +4,50 @@ declare(strict_types=1);
 
 /**
  * dizipal1559.com için basit, tek dosyalık kazıyıcı (scraper).
+ *
+ * dizipal1559.com Cloudflare JS challenge ("Just a moment...") ile korunuyor,
+ * bu yüzden düz cURL isteği 403 döner. Bunu aşmak için istekler FlareSolverr
+ * üzerinden yapılır: https://github.com/FlareSolverr/FlareSolverr
+ *   docker run -d --name flaresolverr -p 8191:8191 ghcr.io/flaresolverr/flaresolverr:latest
+ *
  * Kullanım (CLI):
- *   php dizipal_scraper.php https://dizipal1559.com/kanal/exxen
+ *   FLARESOLVERR_URL=http://localhost:8191/v1 php dizipal_scraper.php https://dizipal1559.com/kanal/exxen
  */
+
+const DEFAULT_FLARESOLVERR_URL = 'http://localhost:8191/v1';
 
 function fetchHtml(string $url): string
 {
+    $flaresolverrUrl = getenv('FLARESOLVERR_URL') ?: DEFAULT_FLARESOLVERR_URL;
+
     $ch = curl_init();
     curl_setopt_array($ch, [
-        CURLOPT_URL => $url,
+        CURLOPT_URL => $flaresolverrUrl,
+        CURLOPT_POST => true,
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_TIMEOUT => 20,
-        CURLOPT_HTTPHEADER => [
-            'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
-            'Accept-Language: tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
-        ],
+        CURLOPT_TIMEOUT => 90,
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+        CURLOPT_POSTFIELDS => json_encode([
+            'cmd' => 'request.get',
+            'url' => $url,
+            'maxTimeout' => 60000,
+        ]),
     ]);
-    $html = curl_exec($ch);
-    if ($html === false) {
+    $raw = curl_exec($ch);
+    if ($raw === false) {
         $error = curl_error($ch);
         curl_close($ch);
-        throw new RuntimeException("cURL hatası: {$error}");
+        throw new RuntimeException("FlareSolverr'a bağlanılamadı ({$flaresolverrUrl}): {$error}");
     }
-    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
-    if ($status >= 400) {
-        throw new RuntimeException("HTTP hata kodu: {$status} ({$url})");
+
+    $data = json_decode($raw, true);
+    if (!is_array($data) || ($data['status'] ?? '') !== 'ok') {
+        $message = $data['message'] ?? 'bilinmeyen hata';
+        throw new RuntimeException("FlareSolverr hatası: {$message}");
     }
-    return $html;
+
+    return $data['solution']['response'] ?? '';
 }
 
 function makeXPath(string $html): DOMXPath
